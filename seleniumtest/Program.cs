@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.IO;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Support.UI;
@@ -30,9 +32,13 @@ namespace seleniumtest
             Thread.Sleep(1000);
             var paginateButtons = driver.FindElementsByClassName("paginate_button");
             var numberPages = paginateButtons.Select(x => x.Text).Where(x => x.ToLower() != "previous" && x.ToLower() != "next").Distinct().ToList();
+            var headerRows = new List<CompoDataRow>();
             foreach (var page in numberPages) {
                 if (page != "1") {
-                    //click the next button
+                    paginateButtons = driver.FindElementsByClassName("paginate_button");
+                    var pageButton = paginateButtons.Where(x => x.Text == page).LastOrDefault();
+                    pageButton.Click();
+                    Thread.Sleep(1000);
                 }
 
                 var detailButtons = driver.FindElementsByClassName("details-control");
@@ -40,12 +46,11 @@ namespace seleniumtest
                     try
                     {
                         button.Click();
-                        //needs to wait for the previous click to load before a new one can kick off or it will skip over it.
                         Thread.Sleep(200);
                     }
-                    catch (Exception) { /*This will be expected since they have two elements with that class that are not clickable*/ }
+                    catch (Exception) { }
                 }
-                var headerRows = new List<CompoDataRow>();
+
                 var headers = driver.FindElementsByXPath("//tr[@id]");
                 foreach (var row in headers) {
                     var phonePattern = new Regex("[\n<p>â˜ ☏]");
@@ -68,9 +73,44 @@ namespace seleniumtest
                     headerRow.DaysSinceAssigned = rowCells[7].Text;
                     headerRow.CompletedAt = rowCells[8].Text;
                     headerRow.Status = rowCells[9].Text;
+                    headerRow.Details = new List<DetailRow>();
+                    var detailRows = driver.FindElementsByXPath("//table[contains(@id, 'subtasks-table-" + headerRow.Id + "')]//tr");
+                    foreach (var detailRow in detailRows)
+                    {
+                        if (!detailRow.Equals(detailRows.LastOrDefault()))
+                        {
+                            var numberPattern = new Regex(@"#(\d+)");
+                            var quantityPattern = new Regex(@"Qty: (\d+)");
+                            var headerDetailRow = new DetailRow();
+                            var children = detailRow.FindElements(By.CssSelector("td"));
+                            var descriptionLine = children[1].Text;
+                            headerDetailRow.Number = Convert.ToInt32(numberPattern.Match(descriptionLine).Groups[1].Value);
+                            descriptionLine = descriptionLine.Replace("#" + headerDetailRow.Number, "").Trim();
+                            headerDetailRow.Quantity = Convert.ToInt32(quantityPattern.Match(descriptionLine).Groups[1].Value);
+                            descriptionLine = descriptionLine.Replace("Qty: " + headerDetailRow.Quantity, "");
+                            headerDetailRow.Description = descriptionLine.Replace(".", "").Trim().Replace("&amp;", "&");
+                            headerDetailRow.Team = children[2].Text.Replace("Team:", "").Trim();
+                            headerDetailRow.Status = children[3].Text.Trim();
+                            headerRow.Details.Add(headerDetailRow);
+                        }
+                    }
                     headerRows.Add(headerRow);
                 }
             }
+            driver.Quit();
+
+            var csv = new StringBuilder();
+            csv.AppendLine("\"Id\",\"Case\",\"Phone\",\"Address\",\"City\",\"Sub Contractor\",\"Team\",\"Assigned At\",\"Days Since Assigned\",\"Completed At\",\"Status\"");
+            foreach (var project in headerRows)
+            {
+                csv.AppendLine("\"" + project.PRGNumber + "\",\"" + project.Case + "\",\"" + project.Phone + "\",\"" + project.Address + "\",\"" + project.City + "\",\"" + project.SubContractor + "\",\"" + project.Team + "\",\"" + project.AssignedAt + "\",\"" + project.DaysSinceAssigned + "\",\"" + project.CompletedAt + "\",\"" + project.Status + "\"");
+                csv.AppendLine("\"Tasks\",\"Number\",\"Description\",\"Quantity\",\"Team\",\"Status\"");
+                foreach (var detail in project.Details)
+                {
+                    csv.AppendLine("\"\",\"" + detail.Number.ToString() + "\",\"" + detail.Description + "\",\"" + detail.Quantity.ToString() + "\",\"" + detail.Team + "\",\"" + detail.Status + "\"");
+                }
+            }
+            File.WriteAllText(@"c:\test\output.csv", csv.ToString());
         }
     }
 }
